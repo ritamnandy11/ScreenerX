@@ -35,7 +35,18 @@ class Settings(BaseSettings):
     
     # Security
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 days
+    
+    @property
+    def ACCESS_TOKEN_EXPIRE_MINUTES(self) -> int:
+        """Get access token expire minutes, handling string values from env vars"""
+        value = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "11520")  # 8 days default
+        try:
+            # Remove any comments and convert to int
+            if "#" in str(value):
+                value = str(value).split("#")[0].strip()
+            return int(value)
+        except (ValueError, TypeError):
+            return 11520  # 8 days default
     
     class Config:
         case_sensitive = True
