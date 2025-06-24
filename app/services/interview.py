@@ -124,31 +124,27 @@ class InterviewService:
             if not interview:
                 return {"success": False, "error": "Interview not found"}
 
-            # Get all responses and analyses
+            # Get all responses
             responses = self.db.query(InterviewResponse).filter(InterviewResponse.interview_id == interview_id).all()
             interview_data = {
                 "job_description": interview.job_description,
                 "responses": [
-                    {"question_index": r.question_index, "response": r.response, "marks": r.marks}
+                    {"question_index": r.question_index, "response": r.response}
                     for r in responses
                 ]
             }
 
-            # Calculate overall score as sum of marks
-            overall_score = sum(r.marks for r in responses)
-
-            # Generate final report
+            # Generate final report without a quantitative score
             report_data = await self.groq_service.generate_final_report(interview_data)
-            report_data["overall_score"] = overall_score
 
             # Create report record
             report = Report(
                 interview_id=interview_id,
-                overall_score=overall_score,
-                strengths=report_data["strengths"],
-                weaknesses=report_data["weaknesses"],
-                detailed_analysis=report_data["detailed_analysis"],
-                recommendations=report_data["recommendations"]
+                overall_score=0,  # Set score to 0 as it's not used
+                strengths=report_data.get("strengths", ""),
+                weaknesses=report_data.get("weaknesses", ""),
+                detailed_analysis=report_data.get("detailed_analysis", ""),
+                recommendations=report_data.get("recommendations", "")
             )
             self.db.add(report)
 
