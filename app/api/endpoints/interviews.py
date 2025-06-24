@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from app.db.database import get_db
 import json
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -83,12 +84,12 @@ async def interview_twiml(interview_id: int, db: Session = Depends(get_db)):
         
         twiml = f"""
 <Response>
-    <Say voice=\"alice\">Hello {candidate_name}, this is an automated interview for the job role you have applied for: {job_role}. Let's begin your interview.</Say>
-    <Pause length=\"1\"/>
-    <Gather input=\"speech dtmf\" timeout=\"8\" numDigits=\"1\" action=\"/api/v1/interviews/{interview_id}/response/0\" method=\"POST\" language=\"en-IN\">
-        <Say voice=\"alice\">Question 1: {questions[0]['question']}</Say>
+    <Say voice="alice">Hello {candidate_name}, this is an automated interview for the job role you have applied for: {job_role}. Let's begin your interview.</Say>
+    <Pause length="1"/>
+    <Gather input="speech dtmf" timeout="8" numDigits="1" action="{settings.PUBLIC_BASE_URL}/api/v1/interviews/{interview_id}/response/0" method="POST" language="en-IN">
+        <Say voice="alice">Question 1: {questions[0]['question']}</Say>
     </Gather>
-    <Say voice=\"alice\">We did not receive your response. Let's move to the next question.</Say>
+    <Say voice="alice">We did not receive your response. Let's move to the next question.</Say>
 </Response>
 """
         print(f"DEBUG: Returning TwiML for interview {interview_id}")
@@ -97,7 +98,7 @@ async def interview_twiml(interview_id: int, db: Session = Depends(get_db)):
         print(f"Error in /twiml: {e}")
         fallback = """
 <Response>
-    <Say voice=\"alice\">Sorry, an application error occurred. Please try again later.</Say>
+    <Say voice="alice">Sorry, an application error occurred. Please try again later.</Say>
     <Hangup/>
 </Response>
 """
@@ -118,7 +119,7 @@ async def process_response(
             print(f"DEBUG: Interview {interview_id} not found in /response")
             fallback = """
 <Response>
-    <Say voice=\"alice\">Sorry, this interview does not exist.</Say>
+    <Say voice="alice">Sorry, this interview does not exist.</Say>
     <Hangup/>
 </Response>
 """
@@ -127,7 +128,7 @@ async def process_response(
             print(f"DEBUG: Interview {interview_id} already completed in /response")
             fallback = """
 <Response>
-    <Say voice=\"alice\">Thank you, your interview is already complete. Have a great day!</Say>
+    <Say voice="alice">Thank you, your interview is already complete. Have a great day!</Say>
     <Hangup/>
 </Response>
 """
@@ -138,7 +139,7 @@ async def process_response(
             print(f"DEBUG: Question index {question_index} out of range for interview {interview_id}")
             fallback = """
 <Response>
-    <Say voice=\"alice\">Thank you, your interview is already complete. Have a great day!</Say>
+    <Say voice="alice">Thank you, your interview is already complete. Have a great day!</Say>
     <Hangup/>
 </Response>
 """
@@ -146,31 +147,22 @@ async def process_response(
         next_index = question_index + 1
 
         user_response = SpeechResult or Digits or ""
-        marks = 0.0
-        if user_response:
-            analysis = await groq_service.analyze_response(
-                questions[question_index]["question"],
-                questions[question_index]["criteria"],
-                user_response
-            )
-            marks = float(analysis.get("score", 0))
         db.add(InterviewResponse(
             interview_id=interview_id,
             question_index=question_index,
             question=questions[question_index]['question'],
-            response=user_response,
-            marks=marks
+            response=user_response
         ))
         db.commit()
 
         if next_index < len(questions):
             twiml = f"""
 <Response>
-    <Pause length=\"7\"/>
-    <Gather input=\"speech dtmf\" timeout=\"8\" numDigits=\"1\" action=\"/api/v1/interviews/{interview_id}/response/{next_index}\" method=\"POST\" language=\"en-IN\">
-        <Say voice=\"alice\">Question {next_index+1}: {questions[next_index]['question']}</Say>
+    <Pause length="7"/>
+    <Gather input="speech dtmf" timeout="8" numDigits="1" action="{settings.PUBLIC_BASE_URL}/api/v1/interviews/{interview_id}/response/{next_index}" method="POST" language="en-IN">
+        <Say voice="alice">Question {next_index+1}: {questions[next_index]['question']}</Say>
     </Gather>
-    <Say voice=\"alice\">We did not receive your response. Let's move to the next question.</Say>
+    <Say voice="alice">We did not receive your response. Let's move to the next question.</Say>
 </Response>
 """
         else:
@@ -178,8 +170,8 @@ async def process_response(
             await service.complete_interview(interview_id)
             twiml = """
 <Response>
-    <Pause length=\"2\"/>
-    <Say voice=\"alice\">Thank you for your time. Have a great day!</Say>
+    <Pause length="2"/>
+    <Say voice="alice">Thank you for your time. Have a great day!</Say>
 </Response>
 """
         return safe_twiml_response(twiml)
@@ -187,7 +179,7 @@ async def process_response(
         print(f"Error in /response/{{question_index}}: {e}")
         fallback = """
 <Response>
-    <Say voice=\"alice\">Sorry, an application error occurred. Please try again later.</Say>
+    <Say voice="alice">Sorry, an application error occurred. Please try again later.</Say>
     <Hangup/>
 </Response>
 """

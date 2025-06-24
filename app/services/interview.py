@@ -91,32 +91,21 @@ class InterviewService:
             if not interview:
                 return {"success": False, "error": "Interview not found"}
 
-            # Get the question and criteria
+            # Get the question
             questions = await self.groq_service.generate_interview_questions(interview.job_description)
             if question_index >= len(questions):
                 return {"success": False, "error": "Invalid question index"}
 
             question = questions[question_index]
-            
-            # Analyze response
-            analysis = await self.groq_service.analyze_response(
-                question["question"],
-                question["criteria"],
-                response
-            )
 
-            # Store response and analysis
-            # Note: You might want to create a separate table for responses
-            # This is a simplified version
+            # Store response only (no analysis or marks)
             interview_data = {
                 "question": question["question"],
-                "response": response,
-                "analysis": analysis
+                "response": response
             }
 
             return {
                 "success": True,
-                "analysis": analysis,
                 "next_question": question_index + 1 < len(questions)
             }
 

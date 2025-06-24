@@ -53,5 +53,4 @@ class InterviewResponse(Base):
     question_index = Column(Integer)
     question = Column(Text)
     response = Column(Text)
-    marks = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow) 
