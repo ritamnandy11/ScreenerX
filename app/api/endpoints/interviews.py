@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.db.database import get_db
 import json
 from app.core.config import settings
+from twilio.twiml.voice_response import VoiceResponse, Gather
 
 router = APIRouter()
 
@@ -86,10 +87,11 @@ async def interview_twiml(interview_id: int, db: Session = Depends(get_db)):
 <Response>
     <Say voice="alice">Hello {candidate_name}, this is an automated interview for the job role you have applied for: {job_role}. Let's begin your interview.</Say>
     <Pause length="1"/>
-    <Gather input="speech dtmf" timeout="8" numDigits="1" action="{settings.PUBLIC_BASE_URL}/api/v1/interviews/{interview_id}/response/0" method="POST" language="en-IN">
+    <Gather input="speech" timeout="10" action="{settings.PUBLIC_BASE_URL}/api/v1/interviews/{interview_id}/response/0" method="POST" language="en-IN" actionOnEmptyResult="true">
         <Say voice="alice">Question 1: {questions[0]['question']}</Say>
     </Gather>
-    <Say voice="alice">We did not receive your response. Let's move to the next question.</Say>
+    <Say voice="alice">We're having trouble proceeding. Please hang up and try again.</Say>
+    <Hangup/>
 </Response>
 """
         print(f"DEBUG: Returning TwiML for interview {interview_id}")
@@ -109,72 +111,77 @@ async def process_response(
     interview_id: int,
     question_index: int,
     SpeechResult: str = Form(None),
-    Digits: str = Form(None),
     db: Session = Depends(get_db)
 ):
     try:
         from app.services.groq_service import GroqService
         interview = db.query(Interview).filter(Interview.id == interview_id).first()
         if not interview:
-            print(f"DEBUG: Interview {interview_id} not found in /response")
-            fallback = """
-<Response>
-    <Say voice="alice">Sorry, this interview does not exist.</Say>
-    <Hangup/>
-</Response>
-"""
-            return safe_twiml_response(fallback)
+            # This case should ideally not be hit if the interview exists
+            return safe_twiml_response('<Response><Say voice="alice">Sorry, this interview does not exist.</Say><Hangup/></Response>')
+
         if interview.status == "completed":
-            print(f"DEBUG: Interview {interview_id} already completed in /response")
-            fallback = """
-<Response>
-    <Say voice="alice">Thank you, your interview is already complete. Have a great day!</Say>
-    <Hangup/>
-</Response>
-"""
-            return safe_twiml_response(fallback)
+            return safe_twiml_response('<Response><Say voice="alice">Thank you, your interview is already complete.</Say><Hangup/></Response>')
+
         groq_service = GroqService()
         questions = await groq_service.generate_interview_questions(interview.job_description)
-        if question_index >= len(questions):
-            print(f"DEBUG: Question index {question_index} out of range for interview {interview_id}")
-            fallback = """
-<Response>
-    <Say voice="alice">Thank you, your interview is already complete. Have a great day!</Say>
-    <Hangup/>
-</Response>
-"""
-            return safe_twiml_response(fallback)
-        next_index = question_index + 1
+        
+        user_response = (SpeechResult or "").strip().lower()
+        response = VoiceResponse()
 
-        user_response = SpeechResult or Digits or ""
+        # Case 1: Candidate asks to repeat the question
+        if user_response == "please repeat":
+            gather = Gather(
+                input='speech',
+                timeout="10",
+                action=f"{settings.PUBLIC_BASE_URL}/api/v1/interviews/{interview_id}/response/{question_index}",
+                method='POST',
+                actionOnEmptyResult=True
+            )
+            gather.say(f"Of course. {questions[question_index]['question']}", voice='alice')
+            response.append(gather)
+            response.say("We're having trouble proceeding. Please hang up and try again.", voice='alice')
+            response.hangup()
+            return safe_twiml_response(str(response))
+
+        # Case 2: Candidate provides a response (or times out)
+        # We save the response, even if it's empty from a timeout
         db.add(InterviewResponse(
             interview_id=interview_id,
             question_index=question_index,
             question=questions[question_index]['question'],
-            response=user_response
+            response=SpeechResult or "" # Store original casing
         ))
         db.commit()
+        
+        next_question_index = question_index + 1
 
-        if next_index < len(questions):
-            twiml = f"""
-<Response>
-    <Pause length="7"/>
-    <Gather input="speech dtmf" timeout="8" numDigits="1" action="{settings.PUBLIC_BASE_URL}/api/v1/interviews/{interview_id}/response/{next_index}" method="POST" language="en-IN">
-        <Say voice="alice">Question {next_index+1}: {questions[next_index]['question']}</Say>
-    </Gather>
-    <Say voice="alice">We did not receive your response. Let's move to the next question.</Say>
-</Response>
-"""
+        # If it was a timeout, inform the user we are moving on.
+        if not user_response:
+             response.say("We did not receive your response. Let's move to the next question.", voice='alice')
+
+        # Proceed to the next question or end the interview
+        if next_question_index < len(questions):
+            gather = Gather(
+                input='speech',
+                timeout="10",
+                action=f"{settings.PUBLIC_BASE_URL}/api/v1/interviews/{interview_id}/response/{next_question_index}",
+                method='POST',
+                actionOnEmptyResult=True
+            )
+            gather.say(f"Question {next_question_index + 1}: {questions[next_question_index]['question']}", voice='alice')
+            response.append(gather)
+            response.say("We're having trouble proceeding. Please hang up and try again.", voice='alice')
+            response.hangup()
         else:
+            # End of interview
             service = InterviewService(db)
             await service.complete_interview(interview_id)
-            twiml = """
-<Response>
-    <Pause length="2"/>
-    <Say voice="alice">Thank you for your time. Have a great day!</Say>
-</Response>
-"""
-        return safe_twiml_response(twiml)
+            response.say("Thank you for your time. Your interview is now complete. Have a great day!", voice='alice')
+            response.hangup()
+            
+        return safe_twiml_response(str(response))
+
     except Exception as e:
         print(f"Error in /response/{{question_index}}: {e}")
         fallback = """
